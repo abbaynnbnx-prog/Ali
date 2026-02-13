@@ -1,0 +1,74 @@
+name: Secure Ubuntu Server - 24/7 (خالی)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */5 * * *'   # هر ۵ ساعت restart خودکار
+
+jobs:
+  ubuntu-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      # ────── ۱. فعال کردن SSH و تنظیم کاربر ──────
+      - name: Enable SSH + Set Credentials
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y openssh-server
+
+          # تنظیم رمز کاربر runner (رمز دلخواهت رو عوض کن)
+          echo 'runner:SecureLinux2026' | sudo chpasswd
+
+          # اجازه ورود با رمز
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config
+
+          sudo systemctl enable ssh
+          sudo systemctl start ssh
+          sudo systemctl restart ssh
+
+          echo "✅ SSH Server فعال شد!"
+
+      # ────── ۲. اتصال به Tailscale ──────
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      # ────── ۳. نمایش اطلاعات اتصال ──────
+      - name: Connection Info
+        shell: bash
+        run: |
+          echo ""
+          echo "============================================================="
+          echo "             🚀 سرور Ubuntu 24.04 آماده شد!             "
+          echo "============================================================="
+          echo ""
+          
+          IP=$(tailscale ip -4)
+          echo "🌐 Tailscale IP      : $IP"
+          echo "👤 Username          : runner"
+          echo "🔑 Password          : SecureLinux2026"
+          echo ""
+          echo "📌 نحوه اتصال:"
+          echo "   ssh runner@$IP"
+          echo ""
+          echo "   اپ‌های پیشنهادی:"
+          echo "   • Termius (اندروید/کامپیوتر)"
+          echo "   • JuiceSSH (اندروید)"
+          echo "   • FinalShell / Tabby (کامپیوتر)"
+          echo ""
+          echo "✅ سرور همیشه زنده (هر ۵ ساعت restart خودکار)"
+          echo "============================================================="
+
+      # ────── ۴. Auto Restart ──────
+      - name: Auto Restart
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          gh workflow run "\( {{ github.workflow }}" --ref " \){{ github.ref_name }}"
+          sleep 21600

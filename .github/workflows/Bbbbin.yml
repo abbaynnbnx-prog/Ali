@@ -1,0 +1,101 @@
+name: Secure Linux SSH via Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-ssh:
+    name: Create Secure Linux SSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 4320   # حداکثر ۷۲ ساعت
+
+    steps:
+      - name: Enable SSH + Firewall
+        run: |
+          echo "Enabling SSH and configuring firewall..." 
+          sudo apt update -qq
+          sudo apt install -y openssh-server ufw curl -qq
+          
+          # فعال کردن SSH و اجازه root login (برای راحتی)
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          
+          sudo ufw allow 22
+          sudo ufw --force enable
+          sudo systemctl restart ssh
+          echo "SSH enabled successfully"
+
+      - name: Create Strong SSH User
+        run: |
+          echo "Creating strong SSH user..."
+          
+          # تولید پسورد ۱۶ کاراکتری خیلی قوی
+          PASSWORD=\( (openssl rand -base64 16 | tr -dc 'A-Za-z0-9!@# \)%^&*()_+' | head -c 16)
+          
+          # مخفی کردن پسورد در لاگ GitHub
+          echo "::add-mask::$PASSWORD"
+          
+          sudo useradd -m -s /bin/bash sshuser
+          echo "sshuser:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo sshuser
+          
+          echo "SSH_USER=sshuser" >> $GITHUB_ENV
+          echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
+          
+          echo "Strong SSH user created successfully"
+
+      - name: Install Tailscale (Latest)
+        run: |
+          echo "Installing latest Tailscale..."
+          curl -fsSL https://tailscale.com/install.sh | sudo sh
+          
+          # نسخه فعلی رو نمایش بده
+          tailscale version
+
+      - name: Connect to Tailscale
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          echo "Connecting to Tailscale..."
+          
+          sudo tailscale up \
+            --authkey=$TAILSCALE_AUTH_KEY \
+            --hostname="gh-linux-ssh-${{ github.run_id }}" \
+            --accept-routes=false \
+            --accept-dns=false
+          
+          # گرفتن IP Tailscale
+          TS_IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+          echo "Connected → $TS_IP"
+
+      - name: Verify SSH Accessibility
+        run: |
+          echo "Verifying SSH on Tailscale IP..."
+          TS_IP=${{ env.TAILSCALE_IP }}
+          nc -zv $TS_IP 22 && echo "SSH is ready on port 22!" || (echo "SSH failed"; exit 1)
+
+      - name: SSH Connection Info
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════╗"
+          echo "║         LINUX SSH ACCESS INFORMATION         ║"
+          echo "╠══════════════════════════════════════════════╣"
+          echo "║ Address   : ${{ env.TAILSCALE_IP }}          ║"
+          echo "║ Username  : ${{ env.SSH_USER }}              ║"
+          echo "║ Password  : ${{ env.SSH_PASS }}              ║"
+          echo "╚══════════════════════════════════════════════╝"
+          echo ""
+          echo "Connect with:"
+          echo "   ssh \( {{ env.SSH_USER }}@ \){{ env.TAILSCALE_IP }}"
+          echo ""
+          echo "Tailscale must be running on your device."
+
+      - name: Keep Runner Alive
+        run: |
+          echo "Linux SSH session is now active."
+          echo "Cancel this workflow when you are done."
+          while true; do
+            echo "[$(date '+%H:%M:%S')] SSH is still running..."
+            sleep 180
+          done

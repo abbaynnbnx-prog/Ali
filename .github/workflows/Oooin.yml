@@ -1,0 +1,59 @@
+name: Simple Linux SSH (No Tailscale)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440
+
+    steps:
+      - name: Setup SSH Server
+        run: |
+          echo "Installing SSH..."
+          sudo apt update -qq
+          sudo apt install -y openssh-server -qq
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
+          echo "SSH Server ready ✅"
+
+      - name: Create Strong User
+        run: |
+          PASSWORD=$(openssl rand -hex 8)
+          echo "::add-mask::$PASSWORD"
+
+          sudo useradd -m -s /bin/bash sshuser
+          echo "sshuser:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo sshuser
+
+          echo "SSH_USER=sshuser" >> $GITHUB_ENV
+          echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
+          echo "User created successfully"
+
+      - name: Show Connection Info
+        run: |
+          PUBLIC_IP=$(curl -s https://api.ipify.org)
+          echo ""
+          echo "╔══════════════════════════════════════════════╗"
+          echo "║        SIMPLE LINUX SSH ACCESS               ║"
+          echo "╠══════════════════════════════════════════════╣"
+          echo "║ IP       : $PUBLIC_IP                        ║"
+          echo "║ Port     : 22                                ║"
+          echo "║ Username : sshuser                           ║"
+          echo "║ Password : $SSH_PASS                         ║"
+          echo "╚══════════════════════════════════════════════╝"
+          echo ""
+          echo "Connect with:"
+          echo "   ssh sshuser@$PUBLIC_IP"
+          echo ""
+          echo "⚠️  Warning: Port 22 is open on internet - use only for short time!"
+
+      - name: Keep Runner Alive
+        run: |
+          echo "Linux SSH is active..."
+          echo "Cancel the workflow when you are finished."
+          while true; do
+            echo "[$(date '+%H:%M:%S')] Still running..."
+            sleep 180
+          done
